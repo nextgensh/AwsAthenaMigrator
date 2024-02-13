@@ -8,15 +8,16 @@ import os
 def main():
     argv = sys.argv
 
-    if len(argv) < 2:
-        print('Error: JSON argument needed.')
+    if len(argv) < 3:
+        print('Error: 2 arguments needed. Json file of combined schema and s3 prefix for the new location buckets.')
         exit()
 
     filename = argv[1]
+    prefix = argv[2]
     
-    SplitTables(filename)
+    SplitTables(filename, prefix)
 
-def SplitTables(filename):
+def SplitTables(filename, prefix):
     contents = None
 
     with open(filename, 'r') as f:
@@ -26,10 +27,12 @@ def SplitTables(filename):
     tableList = content['TableList']
 
     for table in tableList:
-        createTable(table)
+        createTable(table, prefix)
 
-def createTable(table):
+def createTable(table, prefix):
     databaseName = table['DatabaseName']
+
+    print(f"Processing {table['Name']}")
 
     # We will create a new local directory with the database name
     # within which all the individual table names will go.
@@ -42,14 +45,29 @@ def createTable(table):
     # We only need a subset of the values returned by the get-table output
     acceptedParams = ['Name', 'Description', 'Owner', 'LastAccessTime',  'LastAnalyzedTime', 'Retention', 'StorageDescriptor', 'PartitionKeys', 'ViewOriginalText', 'ViewExpandedText', 'TableType', 'Parameters', 'TargetTable']
     toRemove = []
+    tableName = table['Name']
     for key in table.keys():
         if not key in acceptedParams:
             toRemove.append(key)
 
     for key in toRemove:
         del table[key]
-    
-    tableName = table['Name']
+
+    if not ('Location' in table['StorageDescriptor']):
+        print(f"Skipping {tableName} as StorageDescriptor does not contain field named Location.")
+        return
+
+    # Add the prefix to the location.
+    location = table['StorageDescriptor']['Location']
+    if len(location) > 0:
+        protocol = location[:5]
+        path = location[len(protocol):].split('/')
+        bucketName = path[0]
+        bucketName = ''.join([prefix, '-', bucketName])
+        path[0] = bucketName
+        location = ''.join([protocol, '/'.join(path)])
+        table['StorageDescriptor']['Location'] = location
+
     with open(f"{tableName}.json", 'w') as f:
         f.write(json.dumps(table, indent=1))
 
